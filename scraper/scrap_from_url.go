@@ -3,13 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"github.com/gocolly/colly"
 	"github.com/julienschmidt/httprouter"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -28,18 +26,23 @@ type ProductDetails struct {
 	LastUpdatedTime string  `json:"last_updated_time"`
 }
 
-type products []ProductDetails
+//---------------------write response back to api server--------------------------
+func writeResponse(w http.ResponseWriter, msg string) {
+	_, err := w.Write([]byte(msg))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println("unable to write response, Reason:", err)
+	}
+}
 
-//scrape mentioned details from given url.
+//---------------scrape product details from given url----------------
 func scrapeFromGivenUrl(url string) (*ProductDetails, error) {
 	var productName, productDesc, price, imageUrls, totalNumberOfReviews string
 	var images map[string]interface{}
 
-	log.Println("Scraping from url: ", url)
-
 	c := colly.NewCollector()
 	c.OnRequest(func(r *colly.Request) {
-		fmt.Println("Visiting", r.URL)
+		log.Println("Visiting", r.URL)
 	})
 
 	c.OnHTML("#productTitle", func(e *colly.HTMLElement) {
@@ -68,14 +71,16 @@ func scrapeFromGivenUrl(url string) (*ProductDetails, error) {
 		if err != nil {
 			log.Println("Unable to scrape product url, Reason:", err)
 		}
-		fmt.Println(images)
-		//join all map keys, ie image URLs
+		log.Println(images)
+
+		//join all images corresponding to this product, ie image URLs
 		keys := make([]string, 0, len(images))
 		for k := range images {
 			keys = append(keys, k)
 		}
 		imageUrls = "[" + strings.Join(keys, ", ") + "]"
 	})
+
 	c.Visit(url)
 
 	productDetails := &ProductDetails{
@@ -89,11 +94,11 @@ func scrapeFromGivenUrl(url string) (*ProductDetails, error) {
 		},
 		CreationTime: time.Now().Format("2006-01-02 15:04:05"),
 	}
-
 	return productDetails, nil
+
 }
 
-//process post request at /scrape, read payload and call scrapper function.
+//---------------process scrape request--------------------------------
 func processScraper(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	var input map[string]string
 	var url string
@@ -101,17 +106,25 @@ func processScraper(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 
 	reqBody, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		fmt.Fprintf(w, "Kindly enter data with the url field to scrape.")
+		log.Println("unable to read data from payload. Reason:", err)
+		writeResponse(w, "Kindly enter data with the url field to scrape!")
+		return
 	}
 
 	err = json.Unmarshal(reqBody, &input)
 	if err != nil {
-		fmt.Fprintf(w, "Unable to convert data to required struct.")
+		log.Println("unable to convert payload to map[string]string Reason:", err)
+		writeResponse(w, "Oops....Something went wrong!, please try again later!")
+		return
 	}
+
 	if url, ok = input["url"]; !ok {
-		fmt.Fprintf(w, "Unable to read url from payload, please set body like, eg: {'url':'https://myexample.com/'}")
+		log.Println("requested payload does not contains url field!")
+		writeResponse(w, "Oops....Unable please set body like, eg: {'url':'https://myexample.com/'}!")
+		return
 	}
-	productDetails, err := scrapeFromGivenUrl(url)
+
+	productDetails, _ := scrapeFromGivenUrl(url)
 
 	//write response back to browser
 	responseBody, err := json.Marshal(productDetails)
@@ -120,28 +133,23 @@ func processScraper(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 	}
 	_, err = w.Write(responseBody)
 	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
 		log.Println("error occurred while writing response, Reason: ", err)
 	}
 
 	//store all scraped data into mysql table using.
-	url = os.Getenv("DATA_STORE_URL")
-	resp, err := http.Post(url+"/insertScrapedData", "application/json", bytes.NewBuffer(responseBody))
+	resp, err := http.Post("http://localhost:8081/insertScrapedData", "application/json", bytes.NewBuffer(responseBody))
 	if err != nil {
 		log.Println("unable to make request to db service, Reason:", err)
+		return
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalln(err)
-	}
-	log.Println(string(body))
-
 }
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	mux := httprouter.New()
-	mux.POST("/scrape", processScraper)
+	mux.GET("/scrape", processScraper)
 	log.Fatalln(http.ListenAndServe(":8080", mux))
 
 }

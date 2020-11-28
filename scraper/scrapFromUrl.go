@@ -1,4 +1,5 @@
 package main
+
 import (
 	"bytes"
 	"encoding/json"
@@ -14,28 +15,27 @@ import (
 )
 
 type Product struct {
-	 Name         string  `json:"name"`
-	 ImageURL     string  `json:"image_url"`
-	 Description  string  `json:"description"`
-	 Price        string  `json:"price"`
-	 TotalReviews string   `json:"total_reviews"`
+	Name         string `json:"name"`
+	ImageURL     string `json:"image_url"`
+	Description  string `json:"description"`
+	Price        string `json:"price"`
+	TotalReviews string `json:"total_reviews"`
 }
 type ProductDetails struct {
-	Url             string   `json:"url"`
-	Product         Product   `json:"product"`
-	CreationTime    string    `json:"creation_time"`
-	LastUpdatedTime string   `json:"last_updated_time"`
+	Url             string  `json:"url"`
+	Product         Product `json:"product"`
+	CreationTime    string  `json:"creation_time"`
+	LastUpdatedTime string  `json:"last_updated_time"`
 }
 
 type products []ProductDetails
 
-
 //scrape mentioned details from given url.
-func scrapeFromGivenUrl(url string) (*ProductDetails,error) {
+func scrapeFromGivenUrl(url string) (*ProductDetails, error) {
 	var productName, productDesc, price, imageUrls, totalNumberOfReviews string
 	var images map[string]interface{}
 
-	log.Println("Scraping from url: ",url)
+	log.Println("Scraping from url: ", url)
 
 	c := colly.NewCollector()
 	c.OnRequest(func(r *colly.Request) {
@@ -44,27 +44,26 @@ func scrapeFromGivenUrl(url string) (*ProductDetails,error) {
 
 	c.OnHTML("#productTitle", func(e *colly.HTMLElement) {
 		productName = strings.TrimSpace(e.Text)
-		log.Println("name:",productName)
+		log.Println("name:", productName)
 	})
 
 	c.OnHTML("span.a-size-base.a-color-price", func(e *colly.HTMLElement) {
 		price = strings.TrimSpace(e.Text)
-		log.Println("price:",price)
+		log.Println("price:", price)
 	})
 
 	c.OnHTML("#productDescription", func(e *colly.HTMLElement) {
 		productDesc = strings.TrimSpace(e.Text)
-		log.Println("description:",productDesc)
+		log.Println("description:", productDesc)
 	})
-
 
 	c.OnHTML("#acrCustomerReviewText", func(e *colly.HTMLElement) {
 		totalNumberOfReviews = strings.TrimSpace(e.Text)
-		log.Println("nums of reviews:",totalNumberOfReviews)
+		log.Println("nums of reviews:", totalNumberOfReviews)
 	})
 
 	c.OnHTML("div.imgTagWrapper img", func(e *colly.HTMLElement) {
-		s :=e.Attr("data-a-dynamic-image")
+		s := e.Attr("data-a-dynamic-image")
 		err := json.Unmarshal([]byte(s), &images)
 		if err != nil {
 			log.Println("Unable to scrape product url, Reason:", err)
@@ -80,57 +79,55 @@ func scrapeFromGivenUrl(url string) (*ProductDetails,error) {
 	c.Visit(url)
 
 	productDetails := &ProductDetails{
-		Url:             url,
-		Product:         Product{
+		Url: url,
+		Product: Product{
 			Name:         productName,
 			Description:  productDesc,
 			Price:        price,
 			ImageURL:     imageUrls,
 			TotalReviews: totalNumberOfReviews,
 		},
-		CreationTime:    time.Now().Format("2006-01-02 15:04:05"),
+		CreationTime: time.Now().Format("2006-01-02 15:04:05"),
 	}
 
-	return productDetails,nil
+	return productDetails, nil
 }
-
 
 //process post request at /scrape, read payload and call scrapper function.
 func processScraper(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	var input map[string]string
 	var url string
-	var ok  bool
+	var ok bool
 
 	reqBody, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		fmt.Fprintf(w, "Kindly enter data with the url field to scrape.")
 	}
 
-	err = json.Unmarshal(reqBody,&input)
+	err = json.Unmarshal(reqBody, &input)
 	if err != nil {
-		fmt.Fprintf(w,"Unable to convert data to required struct.")
+		fmt.Fprintf(w, "Unable to convert data to required struct.")
 	}
 	if url, ok = input["url"]; !ok {
-		fmt.Fprintf(w,"Unable to read url from payload, please set body like, eg: {'url':'https://myexample.com/'}")
+		fmt.Fprintf(w, "Unable to read url from payload, please set body like, eg: {'url':'https://myexample.com/'}")
 	}
 	productDetails, err := scrapeFromGivenUrl(url)
 
 	//write response back to browser
 	responseBody, err := json.Marshal(productDetails)
 	if err != nil {
-		log.Println("unable to make response body, Reason: ",err)
+		log.Println("unable to make response body, Reason: ", err)
 	}
 	_, err = w.Write(responseBody)
 	if err != nil {
-		log.Println("error occurred while writing response, Reason: ",err)
+		log.Println("error occurred while writing response, Reason: ", err)
 	}
-
 
 	//store all scraped data into mysql table using.
 	url = os.Getenv("DATA_STORE_URL")
 	resp, err := http.Post(url+"/insertScrapedData", "application/json", bytes.NewBuffer(responseBody))
 	if err != nil {
-		log.Println("unable to make request to db service, Reason:",err)
+		log.Println("unable to make request to db service, Reason:", err)
 	}
 	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
@@ -141,13 +138,10 @@ func processScraper(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 
 }
 
-
-
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	mux := httprouter.New()
-        mux.POST("/scrape", processScraper)
-        log.Fatalln(http.ListenAndServe(":8080",mux))
+	mux.POST("/scrape", processScraper)
+	log.Fatalln(http.ListenAndServe(":8080", mux))
 
 }
-

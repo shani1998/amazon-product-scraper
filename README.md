@@ -14,6 +14,6 @@ docker-compose up -d
 
 ## test
 ```shell
-curl -i -X POST -H "Content-Type: application/json" -d '{ "url": "https://www.amazon.com/PlayStation-4-Pro-1TB-Console/dp/B01LOP8EZC/"}' http://localhost:8080/scrape
-curl -v -XGET -H "Content-Type: application/json" http://localhost:8080/products  //list all products details
+curl -i -XGET -H "Content-Type: application/json" -d '{ "url": "https://www.amazon.com/PlayStation-4-Pro-1TB-Console/dp/B01LOP8EZC/"}' http://localhost:8080/scrape
+curl -v -XGET -H "Content-Type: application/json" http://localhost:8081/products
 ```

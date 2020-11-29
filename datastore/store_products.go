@@ -57,6 +57,15 @@ func insertProduct(w http.ResponseWriter, r *http.Request, _ httprouter.Params) 
 		return
 	}
 
+	//check whether db connection was established properly or not
+	if db ==nil {
+		isInitialized, _ := initDataBase()
+		if !isInitialized{
+			writeResponse(w, "Oops....unable to connect with database, please try again later!")
+			return
+		}
+	}
+
 	//if product table doesn't exist then create one
 	if !isTablePresent("product") {
 		_, err := db.Exec("CREATE TABLE `test`.`product` (`name` VARCHAR(50) NOT NULL ,`description` LONGTEXT NOT NULL ,`url` VARCHAR(250) NOT NULL ,`imageUrl` TEXT NOT NULL ,`price` VARCHAR(20) NOT NULL ,`totalReviews` VARCHAR(20) NOT NULL ,`lastUpdatedTime` VARCHAR(250) NOT NULL ,`creationTime` VARCHAR(250) NOT NULL ,PRIMARY KEY (`url`));")
@@ -104,6 +113,15 @@ func listProducts(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		log.Println("product table not present!")
 		writeResponse(w, "Oops....No data available, please try again later!")
 		return
+	}
+
+	//check whether db connection was established properly or not
+	if db ==nil {
+		isInitialized, _ := initDataBase()
+		if !isInitialized{
+			writeResponse(w, "Oops....unable to connect with database, please try again later!")
+			return
+		}
 	}
 
 	//fetch all rows from table product.
@@ -160,8 +178,10 @@ func writeResponse(w http.ResponseWriter, msg string) {
 	}
 }
 
+
+
 //---initialize db and set reference variable to it---------------
-func init() {
+func initDataBase() (bool, error){
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	// Set an Environment Variables
@@ -180,13 +200,13 @@ func init() {
 	dBConnection, err := sql.Open("mysql", dataSource)
 	if err != nil {
 		log.Println("Db Connection Failed!!, Reason:", err)
-		return
+		return false, err
 	}
 
 	err = dBConnection.Ping()
 	if err != nil {
 		log.Println("Ping Failed!!, Reason:", err)
-		return
+		return false, err
 	}
 
 	log.Printf("Connected to DB %s successfully\n", dbName)
@@ -194,6 +214,11 @@ func init() {
 	dBConnection.SetMaxOpenConns(10)
 	dBConnection.SetMaxIdleConns(5)
 	dBConnection.SetConnMaxLifetime(time.Second * 10)
+	return true, nil
+}
+
+func init() {
+	initDataBase()
 }
 
 func main() {

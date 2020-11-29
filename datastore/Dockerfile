@@ -1,3 +1,3 @@
 FROM centos:centos7
-ADD ./storeProducts /storeProducts
-ENTRYPOINT ["/storeProducts"]
+ADD ./store_products /store_products
+ENTRYPOINT ["/store_products"]

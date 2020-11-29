@@ -138,7 +138,7 @@ func processScraper(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 	}
 
 	//store all scraped data into mysql table using.
-	resp, err := http.Post("http://localhost:8081/insertScrapedData", "application/json", bytes.NewBuffer(responseBody))
+	resp, err := http.Post("http://localhost:8081/insertProduct", "application/json", bytes.NewBuffer(responseBody))
 	if err != nil {
 		log.Println("unable to make request to db service, Reason:", err)
 		return

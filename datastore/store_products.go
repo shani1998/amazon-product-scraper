@@ -108,13 +108,6 @@ func listProducts(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	var product ProductDetails
 	var allProducts []ProductDetails
 
-	//check whether product table present or not
-	if !isTablePresent("product") {
-		log.Println("product table not present!")
-		writeResponse(w, "Oops....No data available, please try again later!")
-		return
-	}
-
 	//check whether db connection was established properly or not
 	if db ==nil {
 		isInitialized, _ := initDataBase()
@@ -123,6 +116,14 @@ func listProducts(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 			return
 		}
 	}
+
+	//check whether product table present or not
+	if !isTablePresent("product") {
+		log.Println("product table not present!")
+		writeResponse(w, "Oops....No data available, please try again later!")
+		return
+	}
+
 
 	//fetch all rows from table product.
 	products, err := db.Query("SELECT * FROM `product`")

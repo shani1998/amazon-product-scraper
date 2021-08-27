@@ -1,17 +1,32 @@
-package main
+package datastore
 
 import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/julienschmidt/httprouter"
-	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
+	log "github.com/sirupsen/logrus"
 )
+
+const (
+	tableName     = "product"
+	defaultDBHost = "localhost"
+	defaultDBUser = "root"
+	defaultDBName = "test"
+)
+
+var db *sql.DB
+
+type ProductDetails struct {
+	URL             string   `json:"url"`
+	Product         *Product `json:"product"`
+	CreationTime    string   `json:"creation_time"`
+	LastUpdatedTime string   `json:"last_updated_time"`
+}
 
 type Product struct {
 	Name         string `json:"name"`
@@ -20,14 +35,47 @@ type Product struct {
 	Price        string `json:"price"`
 	TotalReviews string `json:"total_reviews"`
 }
-type ProductDetails struct {
-	Url             string  `json:"url"`
-	Product         Product `json:"product"`
-	CreationTime    string  `json:"creation_time"`
-	LastUpdatedTime string  `json:"last_updated_time"`
-}
 
-var db *sql.DB
+func DBConn() (*sql.DB, error) {
+	var err error
+	var host, dbUser, dbPass, dbName string
+
+	// Get db config variables
+	if host = os.Getenv("MYSQL_HOST"); host == "" {
+		host = defaultDBHost
+	}
+	if dbUser = os.Getenv("MYSQL_USER"); dbUser == "" {
+		dbUser = defaultDBUser
+	}
+	if dbName = os.Getenv("MYSQL_DATABASE"); dbName == "" {
+		dbName = defaultDBName
+	}
+	dbPass = os.Getenv("MYSQL_ROOT_PASSWORD")
+	log.Infof("Trying to connect with DB with info, host=%s, user=%s, db=%s", host, dbUser, dbName)
+	dataSource := fmt.Sprintf("%s:%s@(%s:3306)/%s", dbUser, dbPass, host, dbName)
+	retryCount := 1
+	for {
+		db, err = sql.Open("mysql", dataSource)
+		if err == nil {
+			break
+		}
+		time.Sleep((1 << retryCount) * 5 * time.Second) // wait 5s, 10s, 20ms, 40s ...
+		log.Warnf("db Connection Failed!!, error: %v", err)
+		if retryCount > 20 {
+			retryCount = 1
+		}
+	}
+	err = db.Ping()
+	if err != nil {
+		log.Warnf("Ping Failed!!, error: %v", err)
+	}
+	log.Printf("Successfully connected to db %s ", dbName)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(time.Second * 10)
+	log.Printf("Successfully connected to Postgres db")
+	return db, nil
+}
 
 //-------------check whether given table is present ot not---------
 func isTablePresent(tableName string) bool {
@@ -39,101 +87,53 @@ func isTablePresent(tableName string) bool {
 	return false
 }
 
-//---------------insert product data into the database-------------------------
-func insertProduct(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	var productDetails ProductDetails
-
-	//read payload
-	reqBody, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		writeResponse(w, "Oops....unable to read body!")
-		return
-	}
-
-	//convert body into our product struct
-	err = json.Unmarshal(reqBody, &productDetails)
-	if err != nil {
-		writeResponse(w, "Oops....unable to unmarshal body to product struct")
-		return
-	}
-
-	//check whether db connection was established properly or not
-	if db ==nil {
-		isInitialized, _ := initDataBase()
-		if !isInitialized{
-			writeResponse(w, "Oops....unable to connect with database, please try again later!")
-			return
-		}
-	}
-
-	//if product table doesn't exist then create one
-	if !isTablePresent("product") {
+// InsertProduct insert product data into the database
+func InsertProduct(product *ProductDetails) {
+	// if product table doesn't exist then create one
+	if !isTablePresent(tableName) {
 		_, err := db.Exec("CREATE TABLE `test`.`product` (`name` VARCHAR(50) NOT NULL ,`description` LONGTEXT NOT NULL ,`url` VARCHAR(250) NOT NULL ,`imageUrl` TEXT NOT NULL ,`price` VARCHAR(20) NOT NULL ,`totalReviews` VARCHAR(20) NOT NULL ,`lastUpdatedTime` VARCHAR(250) NOT NULL ,`creationTime` VARCHAR(250) NOT NULL ,PRIMARY KEY (`url`));")
 		if err != nil {
-			log.Println("unable to create table product, Reason:", err)
-			writeResponse(w, fmt.Sprintf("%s",err))
+			log.Errorf("unable to create table %s, %v", tableName, err)
 			return
 		}
-		log.Println("product table created successfully!")
+		log.Infof("table %s created successfully!", tableName)
 	}
 
-	//insert data into product table
+	// insert data into product table
 	insForm, err := db.Prepare("INSERT INTO `product` (`name`, `description`, `url`, `imageUrl`, `price`, `totalReviews`, `creationTime`) VALUES (?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
-		log.Println("unable to prepare insert query, Reason:", err)
+		log.Errorf("unable to prepare insert query, %v", err)
 		return
 	}
-
-	//check whether body is empty or not to avoid run time error
-	if (productDetails != ProductDetails{}) && (productDetails.Product != Product{}) {
-		url := productDetails.Url
-		name := productDetails.Product.Name
-		desc := productDetails.Product.Description
-		price := productDetails.Product.Price
-		reviews := productDetails.Product.TotalReviews
-		imageUrl := productDetails.Product.ImageURL
-		creationTime := productDetails.CreationTime
-		_, err := insForm.Exec(name, desc, url, imageUrl, price, reviews, creationTime)
-		if err != nil {
-			log.Println("unable to insert data into table product, Reason:", err)
-		} else {
-			log.Println("Data inserted successfully into product table!")
-		}
+	_, err = insForm.Exec(product.Product.Name, product.Product.Description, product.URL, product.Product.ImageURL, product.Product.Price, product.Product.TotalReviews, product.CreationTime)
+	if err != nil {
+		log.Errorf("unable to insert data into table %s, %v", tableName, err)
+		return
 	}
-
+	log.Println("Data inserted successfully into product table!")
 }
 
-//-----------------list all products available in data store--------------------
-func listProducts(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+// ListProducts list all products available in data store.
+func ListProducts(rw http.ResponseWriter, req *http.Request) {
 	var product ProductDetails
 	var allProducts []ProductDetails
 
-	//check whether db connection was established properly or not
-	if db ==nil {
-		isInitialized, _ := initDataBase()
-		if !isInitialized{
-			writeResponse(w, "Oops....unable to connect with database, please try again later!")
-			return
-		}
-	}
-
-	//check whether product table present or not
-	if !isTablePresent("product") {
-		log.Println("product table not present!")
-		writeResponse(w, "Oops....No data available, please try again later!")
+	// check whether product table present or not
+	if !isTablePresent(tableName) {
+		log.Warnf("table %s not present in DB", tableName)
+		http.Error(rw, "product data not found", http.StatusNotFound)
 		return
 	}
 
-
-	//fetch all rows from table product.
+	// fetch all rows from table product.
 	products, err := db.Query("SELECT * FROM `product`")
 	if err != nil {
-		log.Println("product table not present!")
-		writeResponse(w, "Oops....Something went wrong!, please try again later!")
+		log.Warnf("unable to query table %s", tableName)
+		http.Error(rw, "unable to query product data", http.StatusInternalServerError)
 		return
 	}
 
-	//traverse row by row and append to array of products.
+	// traverse row by row and append to array of products.
 	for products.Next() {
 		var name, description, url, imageUrl, price, totalReviews, creationTime, lastUpdateTime string
 		err = products.Scan(&name, &description, &url, &imageUrl, &price, &totalReviews, &creationTime, &lastUpdateTime)
@@ -141,8 +141,8 @@ func listProducts(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 			panic(err.Error())
 		}
 		product = ProductDetails{
-			Url: url,
-			Product: Product{
+			URL: url,
+			Product: &Product{
 				Name:         name,
 				ImageURL:     imageUrl,
 				Description:  description,
@@ -155,78 +155,16 @@ func listProducts(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		allProducts = append(allProducts, product)
 	}
 
-	//convert array of products struct into array of json and write response back to browser
+	// convert array of products struct into array of json and write response back to browser
 	responseBody, err := json.Marshal(allProducts)
 	if err != nil {
 		log.Println("unable to convert struct to json, Reason: ", err)
-		writeResponse(w, "Oops....Something went wrong!, please try again later!")
+		http.Error(rw, fmt.Sprintf("unable to marshal product details %v", err), http.StatusInternalServerError)
 		return
 	}
-	_, err = w.Write(responseBody)
+	_, err = rw.Write(responseBody)
 	if err != nil {
-		log.Println("error occurred while writing response for get products, Reason: ", err)
-		writeResponse(w, "Oops....Something went wrong!, please try again later!")
-		return
+		rw.WriteHeader(http.StatusInternalServerError)
+		log.Errorf("error occurred while writing response, %v ", err)
 	}
 }
-
-//---------------------write response back to api server--------------------------
-func writeResponse(w http.ResponseWriter, msg string) {
-	_, err := w.Write([]byte(msg))
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Println("unable to write response, Reason:", err)
-	}
-}
-
-
-
-//---initialize db and set reference variable to it---------------
-func initDataBase() (bool, error){
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-
-	// Set an Environment Variables
-	_ = os.Setenv("DB_HOST", "localhost")
-	_ = os.Setenv("DB_USERNAME", "root")
-	_ = os.Setenv("DB_PASSWORD", "")
-	_ = os.Setenv("DB_NAME", "test")
-
-	// Get the value of an Environment Variable
-	host := os.Getenv("DB_HOST")
-	dbUserName := os.Getenv("DB_USERNAME")
-	dbPass := os.Getenv("DB_PASSWORD")
-	dbName := os.Getenv("DB_NAME")
-
-	dataSource := fmt.Sprintf("%s:%s@(%s:3306)/%s", dbUserName, dbPass, host, dbName)
-	dBConnection, err := sql.Open("mysql", dataSource)
-	if err != nil {
-		log.Println("Db Connection Failed!!, Reason:", err)
-		return false, err
-	}
-
-	err = dBConnection.Ping()
-	if err != nil {
-		log.Println("Ping Failed!!, Reason:", err)
-		return false, err
-	}
-
-	log.Printf("Connected to DB %s successfully\n", dbName)
-	db = dBConnection
-	dBConnection.SetMaxOpenConns(10)
-	dBConnection.SetMaxIdleConns(5)
-	dBConnection.SetConnMaxLifetime(time.Second * 10)
-	return true, nil
-}
-
-func init() {
-	initDataBase()
-}
-
-func main() {
-	defer db.Close()
-	mux := httprouter.New()
-	mux.GET("/products", listProducts)
-	mux.POST("/insertProduct", insertProduct)
-	log.Fatalln(http.ListenAndServe(":8081", mux))
-}
-

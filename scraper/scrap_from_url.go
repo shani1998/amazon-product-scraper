@@ -1,42 +1,25 @@
-package main
+package scraper
 
 import (
-	"bytes"
 	"encoding/json"
-	"github.com/gocolly/colly"
-	"github.com/julienschmidt/httprouter"
+	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/gocolly/colly"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/shani1998/amazon-product-scraper/datastore"
 )
 
-type Product struct {
-	Name         string `json:"name"`
-	ImageURL     string `json:"image_url"`
-	Description  string `json:"description"`
-	Price        string `json:"price"`
-	TotalReviews string `json:"total_reviews"`
-}
-type ProductDetails struct {
-	Url             string  `json:"url"`
-	Product         Product `json:"product"`
-	CreationTime    string  `json:"creation_time"`
-	LastUpdatedTime string  `json:"last_updated_time"`
-}
-
-//---------------------write response back to api server--------------------------
-func writeResponse(w http.ResponseWriter, msg string) {
-	_, err := w.Write([]byte(msg))
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Println("unable to write response, Reason:", err)
-	}
-}
+const (
+	URL = "url"
+)
 
 //---------------scrape product details from given url----------------
-func scrapeFromGivenUrl(url string) (*ProductDetails, error) {
+func scrapeFromGivenUrl(url string) *datastore.ProductDetails {
 	var productName, productDesc, price, imageUrls, totalNumberOfReviews string
 	var images map[string]interface{}
 
@@ -73,7 +56,7 @@ func scrapeFromGivenUrl(url string) (*ProductDetails, error) {
 		}
 		log.Println(images)
 
-		//join all images corresponding to this product, ie image URLs
+		// join all images corresponding to this product, ie image URLs
 		keys := make([]string, 0, len(images))
 		for k := range images {
 			keys = append(keys, k)
@@ -83,9 +66,9 @@ func scrapeFromGivenUrl(url string) (*ProductDetails, error) {
 
 	c.Visit(url)
 
-	productDetails := &ProductDetails{
-		Url: url,
-		Product: Product{
+	productDetails := &datastore.ProductDetails{
+		URL: url,
+		Product: &datastore.Product{
 			Name:         productName,
 			Description:  productDesc,
 			Price:        price,
@@ -94,62 +77,50 @@ func scrapeFromGivenUrl(url string) (*ProductDetails, error) {
 		},
 		CreationTime: time.Now().Format("2006-01-02 15:04:05"),
 	}
-	return productDetails, nil
+	return productDetails
 
 }
 
-//---------------process scrape request--------------------------------
-func processScraper(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+// ProcessScraper read amazon URL from req and return corresponding product details.
+func ProcessScraper(rw http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		log.Warnf("method %s not implemented for url %s", req.Method, req.URL.String())
+		http.Error(rw, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var input map[string]string
 	var url string
 	var ok bool
-
-	reqBody, err := ioutil.ReadAll(r.Body)
+	reqBody, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		log.Println("unable to read data from payload. Reason:", err)
-		writeResponse(w, "Kindly enter data with the url field to scrape!")
+		log.Errorf("unable to reead req body, %v", err)
+		http.Error(rw, "unable to read req body", http.StatusBadRequest)
 		return
 	}
-
 	err = json.Unmarshal(reqBody, &input)
 	if err != nil {
-		log.Println("unable to convert payload to map[string]string Reason:", err)
-		writeResponse(w, "Oops....Something went wrong!, please try again later!")
+		log.Errorf("unable to unmarshal req body to map[string]string , %v", err)
+		http.Error(rw, fmt.Sprintf("unable to unmarshal req body to map[string]string , %v", err), http.StatusBadRequest)
 		return
 	}
-
-	if url, ok = input["url"]; !ok {
-		log.Println("requested payload does not contains url field!")
-		writeResponse(w, "Oops....Unable please set body like, eg: {'url':'https://myexample.com/'}!")
+	log.Infof("req body %v", input)
+	if url, ok = input[URL]; !ok || len(url) == 0 {
+		log.Warn("missing field 'url' in req body")
+		http.Error(rw, "field 'url' must be provided", http.StatusBadRequest)
 		return
 	}
-
-	productDetails, _ := scrapeFromGivenUrl(url)
-
-	//write response back to browser
+	productDetails := scrapeFromGivenUrl(url)
 	responseBody, err := json.Marshal(productDetails)
 	if err != nil {
-		log.Println("unable to make response body, Reason: ", err)
+		log.Errorf("unable to marshal product details %v ", err)
+		http.Error(rw, fmt.Sprintf("unable to marshal product details %v", err), http.StatusInternalServerError)
 	}
-	_, err = w.Write(responseBody)
+	_, err = rw.Write(responseBody)
 	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Println("error occurred while writing response, Reason: ", err)
+		rw.WriteHeader(http.StatusInternalServerError)
+		log.Errorf("error occurred while writing response, %v ", err)
 	}
 
-	//store all scraped data into mysql table using.
-	resp, err := http.Post("http://localhost:8081/insertProduct", "application/json", bytes.NewBuffer(responseBody))
-	if err != nil {
-		log.Println("unable to make request to db service, Reason:", err)
-		return
-	}
-	defer resp.Body.Close()
-}
-
-func main() {
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	mux := httprouter.New()
-	mux.GET("/scrape", processScraper)
-	log.Fatalln(http.ListenAndServe(":8080", mux))
-
+	// store all scraped data into mysql table using.
+	datastore.InsertProduct(productDetails)
 }

@@ -1,20 +1,12 @@
 version: '3.3'
 services:
   scraper-api:
-    image: skp123/scraper:1.0
+    image: spthk/amazon-product-scraper:0.0.1
     environment:
-      - DATA_STORE_URL= http://127.0.0.1:8081
+      - SCRAPER_HOST_PORT=8080
+      - MYSQL_HOST=docker.for.mac.localhost
     ports:
       - "8080:8080"
-    depends_on:
-      - db
-      - datastore-api
-  datastore-api:
-    image: skp123/scrapestore:0.1
-    environment:
-      - DB_URL= http://127.0.0.1
-    ports:
-      - "8081:8081"
     depends_on:
       - db
   db:
